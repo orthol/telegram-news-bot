@@ -1,10 +1,9 @@
-import asyncio
+import time
 import logging
 import requests
 from telegram import Bot
 from telegram.error import TelegramError
 import schedule
-import time
 from datetime import datetime
 from config import *
 
@@ -20,12 +19,12 @@ class NewsBot:
         self.bot = Bot(token=token)
         self.group_ids = GROUP_IDS[:MAX_GROUPS]  # Limit to max groups
         
-    async def send_to_groups(self, message, parse_mode='HTML'):
+    def send_to_groups(self, message, parse_mode='HTML'):
         """Send message to all groups"""
         success_count = 0
         for group_id in self.group_ids:
             try:
-                await self.bot.send_message(
+                self.bot.send_message(
                     chat_id=group_id,
                     text=message,
                     parse_mode=parse_mode,
@@ -33,7 +32,7 @@ class NewsBot:
                 )
                 success_count += 1
                 logger.info(f"Message sent to group {group_id}")
-                await asyncio.sleep(1)  # Rate limiting
+                time.sleep(1)  # Rate limiting
             except TelegramError as e:
                 logger.error(f"Failed to send to group {group_id}: {e}")
         
@@ -50,7 +49,11 @@ class NewsBot:
                     
                     message = f"🚀 <b>Crypto News Update</b> 🚀\n\n"
                     message += f"<b>Title:</b> {news_item.get('title', 'N/A')}\n"
-                    message += f"<b>Description:</b> {news_item.get('description', 'N/A')[:300]}...\n"
+                    
+                    description = news_item.get('description', 'N/A')
+                    if len(description) > 300:
+                        description = description[:300] + "..."
+                    message += f"<b>Description:</b> {description}\n"
                     
                     if news_item.get('url'):
                         message += f"\n📖 <a href='{news_item['url']}'>Read Full Article</a>"
@@ -69,63 +72,56 @@ class NewsBot:
             return None
             
         try:
-            url = SPORTS_NEWS_API.format(NEWS_API_KEY)
+            url = f"https://newsapi.org/v2/top-headlines?category=sports&language=en&apiKey={NEWS_API_KEY}"
             response = requests.get(url, timeout=10)
             
             if response.status_code == 200:
                 data = response.json()
                 if 'articles' in data and len(data['articles']) > 0:
-                    article = data['articles'][0]  # Get latest article
-                    
-                    message = f"⚽ <b>Sports News Update</b> ⚽\n\n"
-                    message += f"<b>Title:</b> {article.get('title', 'N/A')}\n"
-                    
-                    if article.get('description'):
-                        message += f"<b>Description:</b> {article['description'][:300]}...\n"
-                    
-                    if article.get('url'):
-                        message += f"\n📖 <a href='{article['url']}'>Read Full Article</a>"
-                    
-                    message += f"\n\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-                    return message
+                    # Find first article with title and description
+                    for article in data['articles']:
+                        if article.get('title') and article.get('description'):
+                            message = f"⚽ <b>Sports News Update</b> ⚽\n\n"
+                            message += f"<b>Title:</b> {article.get('title', 'N/A')}\n"
+                            
+                            description = article.get('description', '')[:300]
+                            if len(description) > 300:
+                                description = description[:300] + "..."
+                            message += f"<b>Description:</b> {description}\n"
+                            
+                            if article.get('url'):
+                                message += f"\n📖 <a href='{article['url']}'>Read Full Article</a>"
+                            
+                            message += f"\n\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                            return message
+            
+            # Fallback if no good articles found
+            return "⚽ <b>Sports News Update</b> ⚽\n\nLatest sports news will be updated shortly. Stay tuned!\n\n⏰ " + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + " UTC"
+                
         except Exception as e:
             logger.error(f"Error fetching sports news: {e}")
         
-        return None
+        # Fallback message
+        return "⚽ <b>Sports News Update</b> ⚽\n\nWe're currently updating our sports news feed. Check back soon for the latest updates!\n\n⏰ " + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + " UTC"
 
-    async def post_crypto_news(self):
+    def post_crypto_news(self):
         """Post crypto news to all groups"""
         logger.info("Posting crypto news...")
         news_message = self.get_crypto_news()
         if news_message:
-            success_count = await self.send_to_groups(news_message)
+            success_count = self.send_to_groups(news_message)
             logger.info(f"Crypto news posted to {success_count}/{len(self.group_ids)} groups")
         else:
             logger.warning("No crypto news to post")
 
-    async def post_sports_news(self):
+    def post_sports_news(self):
         """Post sports news to all groups"""
         logger.info("Posting sports news...")
         news_message = self.get_sports_news()
-        if news_message:
-            success_count = await self.send_to_groups(news_message)
-            logger.info(f"Sports news posted to {success_count}/{len(self.group_ids)} groups")
-        else:
-            # Fallback message if API fails
-            fallback_message = (
-                f"🏆 <b>Sports News Update</b> 🏆\n\n"
-                f"Stay tuned for the latest sports news! "
-                f"We're currently updating our news feed.\n\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-            )
-            await self.send_to_groups(fallback_message)
-            logger.info("Fallback sports message sent")
+        success_count = self.send_to_groups(news_message)
+        logger.info(f"Sports news posted to {success_count}/{len(self.group_ids)} groups")
 
-def run_async_job(job_func):
-    """Helper to run async functions in schedule"""
-    asyncio.run(job_func())
-
-async def main():
+def main():
     """Main function to initialize and run the bot"""
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN not found in environment variables")
@@ -143,23 +139,17 @@ async def main():
     logger.info(f"Sports news interval: {SPORTS_INTERVAL} minutes")
 
     # Schedule news posts
-    schedule.every(CRYPTO_INTERVAL).minutes.do(
-        lambda: run_async_job(news_bot.post_crypto_news)
-    )
-    schedule.every(SPORTS_INTERVAL).minutes.do(
-        lambda: run_async_job(news_bot.post_sports_news)
-    )
+    schedule.every(CRYPTO_INTERVAL).minutes.do(news_bot.post_crypto_news)
+    schedule.every(SPORTS_INTERVAL).minutes.do(news_bot.post_sports_news)
 
     # Initial post
-    await asyncio.gather(
-        news_bot.post_crypto_news(),
-        news_bot.post_sports_news()
-    )
+    news_bot.post_crypto_news()
+    news_bot.post_sports_news()
 
     # Keep the bot running
     while True:
         schedule.run_pending()
-        await asyncio.sleep(1)
+        time.sleep(60)  # Check every minute
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
