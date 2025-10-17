@@ -12,7 +12,6 @@ GROUP_IDS = [
 
 # News API Configuration
 CRYPTO_NEWS_API = "https://api.coingecko.com/api/v3/news"
-SPORTS_NEWS_API = "https://newsapi.org/v2/top-headlines?category=sports&apiKey={}"
 
 # NewsAPI.org key (get free key from https://newsapi.org)
 NEWS_API_KEY = os.getenv('NEWS_API_KEY')
