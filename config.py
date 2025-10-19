@@ -7,8 +7,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_IDS = os.getenv("GROUP_IDS", "").split(",")
 
 # Update intervals in minutes
-CRYPTO_INTERVAL = int(os.getenv("CRYPTO_INTERVAL", 1))
-SPORTS_INTERVAL = int(os.getenv("SPORTS_INTERVAL", 1))
+CRYPTO_INTERVAL = int(os.getenv("CRYPTO_INTERVAL", 120))
+SPORTS_INTERVAL = int(os.getenv("SPORTS_INTERVAL", 120))
 
 # NewsAPI key (optional but required for sports news)
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
