@@ -53,23 +53,6 @@ class NewsBot:
                 logger.error(f"❌ Failed to send test to {group_id}: {e}")
 
     # -------------------- Real News Fetchers --------------------
-    async def fetch_crypto_news(self):
-        """Fetch real crypto news from CoinGecko"""
-        url = "https://api.coingecko.com/api/v3/news"
-        try:
-            resp = requests.get(url, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data and "data" in data and len(data["data"]) > 0:
-                    article = data["data"][0]
-                    title = article.get("title", "Latest Crypto News")
-                    desc = article.get("description", "No description.")
-                    link = article.get("url", "")
-                    return f"🪙 *Crypto News*\n\n*{title}*\n{desc}\n\n🔗 [Read More]({link})"
-        except Exception as e:
-            logger.error(f"❌ Error fetching crypto news: {e}")
-        return "🪙 *Crypto News*\n\nUnable to fetch latest updates. Stay tuned!"
-
     async def fetch_sports_news(self):
         """Fetch real sports news using NewsAPI"""
         if not NEWS_API_KEY:
