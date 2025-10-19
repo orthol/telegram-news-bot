@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# -------------------- NewsBot Class --------------------
+#------------------- NewsBot Class --------------------
 class NewsBot:
     def __init__(self, token):
         self.bot = Bot(token=token)
