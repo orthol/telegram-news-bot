@@ -1,155 +1,129 @@
+import os
 import time
 import logging
-import requests
-from telegram import Bot
-from telegram.error import TelegramError
 import schedule
 from datetime import datetime
-from config import *
+from telegram import Bot
+from telegram.error import TelegramError
+from config import BOT_TOKEN, GROUP_IDS, CRYPTO_INTERVAL, SPORTS_INTERVAL
 
-# Setup logging
+# -------------------- Logging --------------------
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
+# -------------------- NewsBot Class --------------------
 class NewsBot:
     def __init__(self, token):
         self.bot = Bot(token=token)
-        self.group_ids = GROUP_IDS[:MAX_GROUPS]  # Limit to max groups
-        
-    def send_to_groups(self, message, parse_mode='HTML'):
-        """Send message to all groups"""
-        success_count = 0
+        self.group_ids = [gid.strip() for gid in GROUP_IDS if gid.strip()]
+
+    def test_bot(self):
+        """Test if the bot token works"""
+        try:
+            bot_info = self.bot.get_me()
+            logger.info(f"🤖 Bot connected as @{bot_info.username}")
+            return True
+        except TelegramError as e:
+            logger.error(f"❌ Bot connection failed: {e}")
+            return False
+
+    def test_group_access(self):
+        """Check which groups the bot can send messages to"""
+        logger.info("🔍 Testing group access...")
         for group_id in self.group_ids:
             try:
-                self.bot.send_message(
-                    chat_id=group_id,
-                    text=message,
-                    parse_mode=parse_mode,
-                    disable_web_page_preview=False
-                )
-                success_count += 1
-                logger.info(f"Message sent to group {group_id}")
-                time.sleep(1)  # Rate limiting
+                test_msg = f"✅ Test message to group {group_id} at {datetime.now().strftime('%H:%M:%S')}"
+                msg = self.bot.send_message(chat_id=group_id, text=test_msg)
+                logger.info(f"✅ Success: {group_id} (message_id={msg.message_id})")
+                time.sleep(1)
             except TelegramError as e:
-                logger.error(f"Failed to send to group {group_id}: {e}")
-        
-        return success_count
+                logger.error(f"❌ Cannot send to group {group_id}: {e}")
+            except Exception as e:
+                logger.error(f"⚠️ Unexpected error for group {group_id}: {e}")
+        logger.info("🔎 Group access test complete.")
 
-    def get_crypto_news(self):
-        """Fetch crypto news from CoinGecko API"""
-        try:
-            response = requests.get(CRYPTO_NEWS_API, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if 'data' in data and len(data['data']) > 0:
-                    news_item = data['data'][0]  # Get latest news
-                    
-                    message = f"🚀 <b>Crypto News Update</b> 🚀\n\n"
-                    message += f"<b>Title:</b> {news_item.get('title', 'N/A')}\n"
-                    
-                    description = news_item.get('description', 'N/A')
-                    if len(description) > 300:
-                        description = description[:300] + "..."
-                    message += f"<b>Description:</b> {description}\n"
-                    
-                    if news_item.get('url'):
-                        message += f"\n📖 <a href='{news_item['url']}'>Read Full Article</a>"
-                    
-                    message += f"\n\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-                    return message
-        except Exception as e:
-            logger.error(f"Error fetching crypto news: {e}")
-        
-        return None
+    def send_test_message(self):
+        """Send a test message to all groups"""
+        for group_id in self.group_ids:
+            try:
+                msg = self.bot.send_message(chat_id=group_id, text="🚀 Bot is now active and ready!")
+                logger.info(f"✅ Sent to {group_id} (message_id={msg.message_id})")
+            except Exception as e:
+                logger.error(f"❌ Failed to send to {group_id}: {e}")
 
-    def get_sports_news(self):
-        """Fetch sports news from NewsAPI"""
-        if not NEWS_API_KEY:
-            logger.error("NewsAPI key not configured")
-            return None
-            
-        try:
-            url = f"https://newsapi.org/v2/top-headlines?category=sports&language=en&apiKey={NEWS_API_KEY}"
-            response = requests.get(url, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                if 'articles' in data and len(data['articles']) > 0:
-                    # Find first article with title and description
-                    for article in data['articles']:
-                        if article.get('title') and article.get('description'):
-                            message = f"⚽ <b>Sports News Update</b> ⚽\n\n"
-                            message += f"<b>Title:</b> {article.get('title', 'N/A')}\n"
-                            
-                            description = article.get('description', '')[:300]
-                            if len(description) > 300:
-                                description = description[:300] + "..."
-                            message += f"<b>Description:</b> {description}\n"
-                            
-                            if article.get('url'):
-                                message += f"\n📖 <a href='{article['url']}'>Read Full Article</a>"
-                            
-                            message += f"\n\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-                            return message
-            
-            # Fallback if no good articles found
-            return "⚽ <b>Sports News Update</b> ⚽\n\nLatest sports news will be updated shortly. Stay tuned!\n\n⏰ " + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + " UTC"
-                
-        except Exception as e:
-            logger.error(f"Error fetching sports news: {e}")
-        
-        # Fallback message
-        return "⚽ <b>Sports News Update</b> ⚽\n\nWe're currently updating our sports news feed. Check back soon for the latest updates!\n\n⏰ " + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + " UTC"
-
+    # -------------------- News Posting --------------------
     def post_crypto_news(self):
-        """Post crypto news to all groups"""
-        logger.info("Posting crypto news...")
-        news_message = self.get_crypto_news()
-        if news_message:
-            success_count = self.send_to_groups(news_message)
-            logger.info(f"Crypto news posted to {success_count}/{len(self.group_ids)} groups")
-        else:
-            logger.warning("No crypto news to post")
+        news = f"🪙 *Crypto News Update* — {datetime.now().strftime('%H:%M:%S')}\nBTC and ETH showing stability today."
+        self._send_to_all_groups(news)
 
     def post_sports_news(self):
-        """Post sports news to all groups"""
-        logger.info("Posting sports news...")
-        news_message = self.get_sports_news()
-        success_count = self.send_to_groups(news_message)
-        logger.info(f"Sports news posted to {success_count}/{len(self.group_ids)} groups")
+        news = f"⚽ *Sports News Update* — {datetime.now().strftime('%H:%M:%S')}\nTop teams preparing for this weekend's matches!"
+        self._send_to_all_groups(news)
 
+    def _send_to_all_groups(self, message):
+        """Send the message to all configured groups"""
+        success = 0
+        for group_id in self.group_ids:
+            try:
+                self.bot.send_message(chat_id=group_id, text=message, parse_mode="Markdown")
+                success += 1
+                time.sleep(1)
+            except Exception as e:
+                logger.error(f"❌ Failed to send to {group_id}: {e}")
+        logger.info(f"📊 Delivery Summary: {success}/{len(self.group_ids)} successful")
+
+# -------------------- Main --------------------
 def main():
-    """Main function to initialize and run the bot"""
+    logger.info("🤖 Starting Telegram News Bot...")
+
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN not found in environment variables")
+        logger.error("❌ BOT_TOKEN not found in environment variables")
         return
-        
     if not GROUP_IDS:
-        logger.error("No GROUP_IDS configured")
+        logger.error("❌ No GROUP_IDS configured")
         return
 
-    # Initialize bot
     news_bot = NewsBot(BOT_TOKEN)
-    
-    logger.info(f"News Bot started! Monitoring {len(news_bot.group_ids)} groups")
-    logger.info(f"Crypto news interval: {CRYPTO_INTERVAL} minutes")
-    logger.info(f"Sports news interval: {SPORTS_INTERVAL} minutes")
 
-    # Schedule news posts
+    if not news_bot.test_bot():
+        logger.error("❌ Bot initialization failed")
+        return
+
+    logger.info(f"✅ Bot initialized successfully")
+    logger.info(f"📋 Monitoring {len(news_bot.group_ids)} groups")
+
+    # Test group access
+    news_bot.test_group_access()
+
+    # Send test message
+    news_bot.send_test_message()
+
+    # Schedule jobs
+    logger.info(f"⏰ Crypto news every {CRYPTO_INTERVAL} min | Sports every {SPORTS_INTERVAL} min")
     schedule.every(CRYPTO_INTERVAL).minutes.do(news_bot.post_crypto_news)
     schedule.every(SPORTS_INTERVAL).minutes.do(news_bot.post_sports_news)
 
-    # Initial post
+    # Send first posts immediately
+    logger.info("🚀 Sending initial posts immediately...")
     news_bot.post_crypto_news()
+    time.sleep(3)
     news_bot.post_sports_news()
 
-    # Keep the bot running
-    while True:
-        schedule.run_pending()
-        time.sleep(60)  # Check every minute
+    logger.info("✅ Bot is now running and scheduled!")
 
+    # Main loop
+    while True:
+        try:
+            schedule.run_pending()
+            time.sleep(30)
+        except Exception as e:
+            logger.error(f"❌ Error in main loop: {e}")
+            time.sleep(60)
+
+# -------------------- Entry Point --------------------
 if __name__ == "__main__":
     main()
