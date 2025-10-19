@@ -1,12 +1,10 @@
 import os
-import time
 import asyncio
 import logging
 import schedule
 import requests
 from datetime import datetime
-from telegram import Bot
-from telegram.error import TelegramError
+from telegram import Bot, TelegramError
 from config import BOT_TOKEN, GROUP_IDS, CRYPTO_INTERVAL, SPORTS_INTERVAL, NEWS_API_KEY
 
 # -------------------- Logging --------------------
@@ -17,12 +15,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# -------------------- Async NewsBot Class --------------------
+# -------------------- Async NewsBot --------------------
 class NewsBot:
     def __init__(self, token):
         self.bot = Bot(token=token)
         self.group_ids = [gid.strip() for gid in GROUP_IDS if gid.strip()]
 
+    # -------- Bot connection test --------
     async def test_bot(self):
         try:
             bot_info = await self.bot.get_me()
@@ -32,71 +31,101 @@ class NewsBot:
             logger.error(f"❌ Bot connection failed: {e}")
             return False
 
+    # -------- Group access test --------
     async def test_group_access(self):
         logger.info("🔍 Testing group access...")
         for group_id in self.group_ids:
             try:
-                test_msg = f"✅ Test message to group {group_id} at {datetime.now().strftime('%H:%M:%S')}"
-                await self.bot.send_message(chat_id=group_id, text=test_msg)
+                await self.bot.send_message(chat_id=group_id, text=f"✅ Test message to group {group_id}")
                 logger.info(f"✅ Access OK for {group_id}")
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"❌ Cannot send to group {group_id}: {e}")
         logger.info("🔎 Group access test complete.")
 
+    # -------- Send test message --------
     async def send_test_message(self):
         for group_id in self.group_ids:
             try:
                 await self.bot.send_message(chat_id=group_id, text="🚀 Bot is active and fetching real news!")
-                logger.info(f"✅ Sent to {group_id}")
+                logger.info(f"✅ Test sent to {group_id}")
             except Exception as e:
                 logger.error(f"❌ Failed to send test to {group_id}: {e}")
 
-    # -------------------- Real News Fetchers --------------------
-    async def fetch_sports_news(self):
-        """Fetch real sports news using NewsAPI"""
-        if not NEWS_API_KEY:
-            return "⚽ *Sports News*\n\nNo NewsAPI key configured."
+    # -------- Fetch crypto news --------
+    async def fetch_crypto_news(self):
+        url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
+        try:
+            resp = requests.get(url, timeout=10)
+            data = resp.json()
+            if "Data" not in data or len(data["Data"]) == 0:
+                return None
 
+            article = data["Data"][0]  # first news item
+            return {
+                "title": article.get("title", "Crypto News"),
+                "desc": article.get("body", ""),
+                "url": article.get("url", ""),
+                "image": article.get("imageurl", "https://cryptologos.cc/logos/bitcoin-btc-logo.png")
+            }
+        except Exception as e:
+            logger.error(f"❌ Error fetching crypto news: {e}")
+            return None
+
+    # -------- Fetch sports news --------
+    async def fetch_sports_news(self):
+        if not NEWS_API_KEY:
+            return None
         url = f"https://newsapi.org/v2/top-headlines?category=sports&language=en&pageSize=1&apiKey={NEWS_API_KEY}"
         try:
             resp = requests.get(url, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                if "articles" in data and len(data["articles"]) > 0:
-                    article = data["articles"][0]
-                    title = article.get("title", "Latest Sports News")
-                    desc = article.get("description", "")
-                    link = article.get("url", "")
-                    return f"⚽ *Sports News*\n\n*{title}*\n{desc}\n\n🔗 [Read More]({link})"
+            data = resp.json()
+            if "articles" in data and len(data["articles"]) > 0:
+                article = data["articles"][0]
+                return {
+                    "title": article.get("title", "Sports News"),
+                    "desc": article.get("description", ""),
+                    "url": article.get("url", ""),
+                    "image": article.get("urlToImage", "https://upload.wikimedia.org/wikipedia/commons/d/d7/Soccerball.svg")
+                }
         except Exception as e:
             logger.error(f"❌ Error fetching sports news: {e}")
-        return "⚽ *Sports News*\n\nUnable to fetch latest sports updates."
+            return None
 
-    # -------------------- Posting --------------------
+    # -------- Post crypto news --------
     async def post_crypto_news(self):
-        msg = await self.fetch_crypto_news()
-        await self._send_to_all_groups(msg)
+        news = await self.fetch_crypto_news()
+        if news:
+            caption = f"🪙 <b>{news['title']}</b>\n{news['desc']}\n<a href='{news['url']}'>Read more</a>"
+            await self._send_photo_to_all(news['image'], caption)
+        else:
+            await self._send_text_to_all("🪙 Crypto News\n\nUnable to fetch latest updates. Stay tuned!")
 
+    # -------- Post sports news --------
     async def post_sports_news(self):
-        msg = await self.fetch_sports_news()
-        await self._send_to_all_groups(msg)
+        news = await self.fetch_sports_news()
+        if news:
+            caption = f"⚽ <b>{news['title']}</b>\n{news['desc']}\n<a href='{news['url']}'>Read more</a>"
+            await self._send_photo_to_all(news['image'], caption)
+        else:
+            await self._send_text_to_all("⚽ Sports News\n\nUnable to fetch latest updates. Stay tuned!")
 
-    async def _send_to_all_groups(self, message):
-        success = 0
+    # -------- Helpers --------
+    async def _send_text_to_all(self, message):
         for group_id in self.group_ids:
             try:
-                await self.bot.send_message(
-                    chat_id=group_id, 
-                    text=message, 
-                    parse_mode="Markdown", 
-                    disable_web_page_preview=True
-                )
-                success += 1
+                await self.bot.send_message(chat_id=group_id, text=message, parse_mode="HTML")
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"❌ Failed to send to {group_id}: {e}")
-        logger.info(f"📊 Delivery Summary: {success}/{len(self.group_ids)} successful")
+
+    async def _send_photo_to_all(self, photo_url, caption):
+        for group_id in self.group_ids:
+            try:
+                await self.bot.send_photo(chat_id=group_id, photo=photo_url, caption=caption, parse_mode="HTML")
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"❌ Failed to send to {group_id}: {e}")
 
 # -------------------- Scheduler --------------------
 async def run_scheduler(news_bot):
@@ -122,6 +151,7 @@ async def main():
     await bot.test_group_access()
     await bot.send_test_message()
 
+    # Schedule every 1 minute
     schedule.every(CRYPTO_INTERVAL).minutes.do(lambda: asyncio.create_task(bot.post_crypto_news()))
     schedule.every(SPORTS_INTERVAL).minutes.do(lambda: asyncio.create_task(bot.post_sports_news()))
 
@@ -130,8 +160,9 @@ async def main():
     await asyncio.sleep(3)
     await bot.post_sports_news()
 
-    logger.info("✅ Running schedule loop...")
+    logger.info("✅ Bot is now running and scheduled!")
     await run_scheduler(bot)
 
+# -------------------- Entry --------------------
 if __name__ == "__main__":
     asyncio.run(main())
