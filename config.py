@@ -1,24 +1,12 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GROUP_IDS = os.getenv("GROUP_IDS", "").split(",")
 
-# Telegram Configuration
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-GROUP_IDS = [
-    int(group_id.strip()) for group_id in os.getenv('GROUP_IDS', '').split(',') 
-    if group_id.strip()
-]
+# News fetch intervals (in minutes)
+CRYPTO_INTERVAL = int(os.getenv("CRYPTO_INTERVAL", 1))
+SPORTS_INTERVAL = int(os.getenv("SPORTS_INTERVAL", 1))
 
-# News API Configuration
-CRYPTO_NEWS_API = "https://api.coingecko.com/api/v3/news"
-
-# NewsAPI.org key (get free key from https://newsapi.org)
-NEWS_API_KEY = os.getenv('NEWS_API_KEY')
-
-# Posting intervals (in minutes)
-CRYPTO_INTERVAL = 60  # 1 hour
-SPORTS_INTERVAL = 30  # 30 minutes
-
-# Maximum groups
-MAX_GROUPS = 10
+# Optional API keys (if you use them)
+CRYPTO_API_KEY = os.getenv("CRYPTO_API_KEY")
+SPORTS_API_KEY = os.getenv("SPORTS_API_KEY")
