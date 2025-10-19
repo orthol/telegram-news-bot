@@ -3,10 +3,11 @@ import time
 import asyncio
 import logging
 import schedule
+import requests
 from datetime import datetime
 from telegram import Bot
 from telegram.error import TelegramError
-from config import BOT_TOKEN, GROUP_IDS, CRYPTO_INTERVAL, SPORTS_INTERVAL
+from config import BOT_TOKEN, GROUP_IDS, CRYPTO_INTERVAL, SPORTS_INTERVAL, NEWS_API_KEY
 
 # -------------------- Logging --------------------
 logging.basicConfig(
@@ -23,7 +24,6 @@ class NewsBot:
         self.group_ids = [gid.strip() for gid in GROUP_IDS if gid.strip()]
 
     async def test_bot(self):
-        """Test if the bot token works"""
         try:
             bot_info = await self.bot.get_me()
             logger.info(f"🤖 Bot connected as @{bot_info.username}")
@@ -33,53 +33,90 @@ class NewsBot:
             return False
 
     async def test_group_access(self):
-        """Check which groups the bot can send messages to"""
         logger.info("🔍 Testing group access...")
         for group_id in self.group_ids:
             try:
                 test_msg = f"✅ Test message to group {group_id} at {datetime.now().strftime('%H:%M:%S')}"
-                msg = await self.bot.send_message(chat_id=group_id, text=test_msg)
-                logger.info(f"✅ Success: {group_id} (message_id={msg.message_id})")
+                await self.bot.send_message(chat_id=group_id, text=test_msg)
+                logger.info(f"✅ Access OK for {group_id}")
                 await asyncio.sleep(1)
-            except TelegramError as e:
-                logger.error(f"❌ Cannot send to group {group_id}: {e}")
             except Exception as e:
-                logger.error(f"⚠️ Unexpected error for group {group_id}: {e}")
+                logger.error(f"❌ Cannot send to group {group_id}: {e}")
         logger.info("🔎 Group access test complete.")
 
     async def send_test_message(self):
-        """Send a test message to all groups"""
         for group_id in self.group_ids:
             try:
-                msg = await self.bot.send_message(chat_id=group_id, text="🚀 Bot is now active and ready!")
-                logger.info(f"✅ Sent to {group_id} (message_id={msg.message_id})")
+                await self.bot.send_message(chat_id=group_id, text="🚀 Bot is active and fetching real news!")
+                logger.info(f"✅ Sent to {group_id}")
             except Exception as e:
-                logger.error(f"❌ Failed to send to {group_id}: {e}")
+                logger.error(f"❌ Failed to send test to {group_id}: {e}")
 
-    # -------------------- News Posting --------------------
+    # -------------------- Real News Fetchers --------------------
+    async def fetch_crypto_news(self):
+        """Fetch real crypto news from CoinGecko"""
+        url = "https://api.coingecko.com/api/v3/news"
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data and "data" in data and len(data["data"]) > 0:
+                    article = data["data"][0]
+                    title = article.get("title", "Latest Crypto News")
+                    desc = article.get("description", "No description.")
+                    link = article.get("url", "")
+                    return f"🪙 *Crypto News*\n\n*{title}*\n{desc}\n\n🔗 [Read More]({link})"
+        except Exception as e:
+            logger.error(f"❌ Error fetching crypto news: {e}")
+        return "🪙 *Crypto News*\n\nUnable to fetch latest updates. Stay tuned!"
+
+    async def fetch_sports_news(self):
+        """Fetch real sports news using NewsAPI"""
+        if not NEWS_API_KEY:
+            return "⚽ *Sports News*\n\nNo NewsAPI key configured."
+
+        url = f"https://newsapi.org/v2/top-headlines?category=sports&language=en&pageSize=1&apiKey={NEWS_API_KEY}"
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                if "articles" in data and len(data["articles"]) > 0:
+                    article = data["articles"][0]
+                    title = article.get("title", "Latest Sports News")
+                    desc = article.get("description", "")
+                    link = article.get("url", "")
+                    return f"⚽ *Sports News*\n\n*{title}*\n{desc}\n\n🔗 [Read More]({link})"
+        except Exception as e:
+            logger.error(f"❌ Error fetching sports news: {e}")
+        return "⚽ *Sports News*\n\nUnable to fetch latest sports updates."
+
+    # -------------------- Posting --------------------
     async def post_crypto_news(self):
-        news = f"🪙 *Crypto News Update* — {datetime.now().strftime('%H:%M:%S')}\nBTC and ETH showing stability today."
-        await self._send_to_all_groups(news)
+        msg = await self.fetch_crypto_news()
+        await self._send_to_all_groups(msg)
 
     async def post_sports_news(self):
-        news = f"⚽ *Sports News Update* — {datetime.now().strftime('%H:%M:%S')}\nTop teams preparing for this weekend's matches!"
-        await self._send_to_all_groups(news)
+        msg = await self.fetch_sports_news()
+        await self._send_to_all_groups(msg)
 
     async def _send_to_all_groups(self, message):
-        """Send the message to all configured groups"""
         success = 0
         for group_id in self.group_ids:
             try:
-                await self.bot.send_message(chat_id=group_id, text=message, parse_mode="Markdown")
+                await self.bot.send_message(
+                    chat_id=group_id, 
+                    text=message, 
+                    parse_mode="Markdown", 
+                    disable_web_page_preview=True
+                )
                 success += 1
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"❌ Failed to send to {group_id}: {e}")
         logger.info(f"📊 Delivery Summary: {success}/{len(self.group_ids)} successful")
 
-# -------------------- Async Scheduler --------------------
-async def run_scheduled(news_bot):
-    """Run schedule jobs in async loop"""
+# -------------------- Scheduler --------------------
+async def run_scheduler(news_bot):
     while True:
         schedule.run_pending()
         await asyncio.sleep(30)
@@ -89,42 +126,29 @@ async def main():
     logger.info("🤖 Starting Telegram News Bot...")
 
     if not BOT_TOKEN:
-        logger.error("❌ BOT_TOKEN not found in environment variables")
+        logger.error("❌ BOT_TOKEN not found")
         return
     if not GROUP_IDS:
-        logger.error("❌ No GROUP_IDS configured")
+        logger.error("❌ No GROUP_IDS found")
         return
 
-    news_bot = NewsBot(BOT_TOKEN)
-
-    if not await news_bot.test_bot():
-        logger.error("❌ Bot initialization failed")
+    bot = NewsBot(BOT_TOKEN)
+    if not await bot.test_bot():
         return
 
-    logger.info(f"✅ Bot initialized successfully")
-    logger.info(f"📋 Monitoring {len(news_bot.group_ids)} groups")
+    await bot.test_group_access()
+    await bot.send_test_message()
 
-    # Test group access
-    await news_bot.test_group_access()
+    schedule.every(CRYPTO_INTERVAL).minutes.do(lambda: asyncio.create_task(bot.post_crypto_news()))
+    schedule.every(SPORTS_INTERVAL).minutes.do(lambda: asyncio.create_task(bot.post_sports_news()))
 
-    # Send test message
-    await news_bot.send_test_message()
-
-    # Schedule jobs
-    logger.info(f"⏰ Crypto news every {CRYPTO_INTERVAL} min | Sports every {SPORTS_INTERVAL} min")
-    schedule.every(CRYPTO_INTERVAL).minutes.do(lambda: asyncio.create_task(news_bot.post_crypto_news()))
-    schedule.every(SPORTS_INTERVAL).minutes.do(lambda: asyncio.create_task(news_bot.post_sports_news()))
-
-    # Send first posts immediately
-    logger.info("🚀 Sending initial posts immediately...")
-    await news_bot.post_crypto_news()
+    logger.info("🚀 Sending initial posts...")
+    await bot.post_crypto_news()
     await asyncio.sleep(3)
-    await news_bot.post_sports_news()
+    await bot.post_sports_news()
 
-    logger.info("✅ Bot is now running and scheduled!")
+    logger.info("✅ Running schedule loop...")
+    await run_scheduler(bot)
 
-    await run_scheduled(news_bot)
-
-# -------------------- Entry Point --------------------
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main()) 
